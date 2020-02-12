@@ -84,6 +84,14 @@ export class EditorWidget extends BaseWidget implements SaveableSource, Navigata
         this.editor.restoreViewState(oldState);
     }
 
+    storeMoveState(): object {
+        return this.editor.storeMoveState();
+    }
+
+    restoreMoveState(state: object): void {
+        return this.editor.restoreMoveState(state);
+    }
+
     get onDispose(): Event<void> {
         return this.toDispose.onDispose;
     }

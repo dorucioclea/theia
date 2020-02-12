@@ -31,6 +31,10 @@ export interface Navigatable {
      * Creates a new URI to which this navigatable should moved based on the given target resource URI.
      */
     createMoveToUri(resourceUri: URI): URI | undefined;
+
+    storeMoveState?(): object;
+    restoreMoveState?(state: object): void;
+
 }
 
 export namespace Navigatable {

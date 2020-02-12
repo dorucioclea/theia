@@ -22,7 +22,7 @@ import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/c
 import {
     FrontendApplicationContribution, ApplicationShell,
     NavigatableWidget, NavigatableWidgetOptions,
-    Saveable, WidgetManager, StatefulWidget, FrontendApplication, ExpandableTreeNode
+    Saveable, WidgetManager, StatefulWidget, FrontendApplication, ExpandableTreeNode, waitForClosed
 } from '@theia/core/lib/browser';
 import { FileSystemWatcher, FileChangeEvent, FileMoveEvent, FileChangeType } from './filesystem-watcher';
 import { MimeService } from '@theia/core/lib/browser/mime-service';
@@ -141,19 +141,25 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
             ...options,
             uri: newResourceUri.toString()
         });
-        const oldState = StatefulWidget.is(widget) ? widget.storeState() : undefined;
-        if (oldState && StatefulWidget.is(newWidget)) {
+        if (widget.storeMoveState && NavigatableWidget.is(newWidget) && newWidget.restoreMoveState) {
+            const oldState = widget.storeMoveState();
+            newWidget.restoreMoveState(oldState);
+        } else if (StatefulWidget.is(widget) && StatefulWidget.is(newWidget)) {
+            const oldState = widget.storeState();
             newWidget.restoreState(oldState);
         }
         const area = this.shell.getAreaFor(widget) || 'main';
-        this.shell.addWidget(newWidget, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pending: Promise<any>[] = [this.shell.addWidget(newWidget, {
             area, ref: widget
-        });
+        })];
         if (this.shell.activeWidget === widget) {
-            this.shell.activateWidget(newWidget.id);
+            pending.push(this.shell.activateWidget(newWidget.id));
         } else if (widget.isVisible) {
-            this.shell.revealWidget(newWidget.id);
+            pending.push(this.shell.revealWidget(newWidget.id));
         }
+        pending.push(this.shell.closeWidget(widget.id, { save: false }));
+        await Promise.all(pending);
     }
     protected createMoveToUri(resourceUri: URI, widget: NavigatableWidget, event: FileMoveEvent): URI | undefined {
         const path = event.sourceUri.relative(resourceUri);
@@ -162,13 +168,16 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
     }
 
     protected readonly deletedSuffix = ' (deleted from disk)';
-    protected updateWidgets(event: FileChangeEvent): void {
+    protected async updateWidgets(event: FileChangeEvent): Promise<void> {
         const relevantEvent = event.filter(({ type }) => type !== FileChangeType.UPDATED);
         if (relevantEvent.length) {
-            this.doUpdateWidgets(relevantEvent);
+            return this.doUpdateWidgets(relevantEvent);
         }
     }
-    protected doUpdateWidgets(event: FileChangeEvent): void {
+    protected async doUpdateWidgets(event: FileChangeEvent): Promise<void> {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pending: Promise<any>[] = [];
+
         const dirty = new Set<string>();
         const toClose = new Map<string, NavigatableWidget[]>();
         for (const [uri, widget] of NavigatableWidget.get(this.shell.widgets)) {
@@ -178,9 +187,12 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
             if (!dirty.has(uriString)) {
                 for (const widget of widgets) {
                     widget.close();
+                    pending.push(waitForClosed(widget));
                 }
             }
         }
+
+        await Promise.all(pending);
     }
     protected updateWidget(uri: URI, widget: NavigatableWidget, event: FileChangeEvent, { dirty, toClose }: {
         dirty: Set<string>;
